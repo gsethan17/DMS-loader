@@ -417,8 +417,8 @@ class DataAnalyzer(object):
                 plt.show()
         return mean_img, None
 
-
-class DataLoader(DataAnalyzer):
+from tensorflow.keras.utils import Sequence
+class DataLoader(DataAnalyzer, Sequence):
     '''A data loader for Driver Monitoring System Initialize the basic data to be loaded.
     Args: 
         drivers: `list` or `tuple`, the registered name of meta data. 
@@ -575,9 +575,9 @@ class DataLoader(DataAnalyzer):
                 imgs = self.get_image(path, frames, view, mode)
                 
                 if t == 0:
-                    x_image[view] = np.array(imgs)[:1]
+                    x_image[view] = np.array(imgs)[:1] / 255.
                 else:
-                    x_image[view] = np.concatenate((x_image[view], np.array(imgs)[:1]), axis=0)
+                    x_image[view] = np.concatenate((x_image[view], np.array(imgs)[:1] / 255.), axis=0)
                     
         return True, x_image
     
@@ -594,7 +594,14 @@ class DataLoader(DataAnalyzer):
         for i, timestamp in enumerate(timestamps):
             
             x_can_sample = self.get_x_serial(timestamp, 'CAN')
+            if np.isnan(x_can_sample).sum() > 0:
+                except_time.append(timestamp)
+                continue
+                
             x_bio_sample = self.get_x_serial(timestamp, 'BIO')
+            if np.isnan(x_bio_sample).sum() > 0:
+                except_time.append(timestamp)
+                continue
             
             flag_img, x_image_samples = self.get_x_image(timestamp)
             
