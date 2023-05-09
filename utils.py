@@ -25,7 +25,7 @@ class DataAnalyzer(object):
     ```
     '''
 
-    def __init__(self, drivers=[], states=[], name=None, **keyargs):
+    def __init__(self, drivers=[], states=[], name=None):
 
         if not type(drivers)==list: raise TypeError("drivers must be list.")
         if not type(states)==list: raise TypeError("states must be list.")
@@ -176,12 +176,16 @@ class DataAnalyzer(object):
 
         return df_concat.reset_index(inplace=False, drop=True)
     
-    def plot_mean_value(self, col, prev_sec, byDriver=True):
+    def plot_mean_value(self, col, deltaT, byDriver=True):
         """plot the mean of mean value of a given column for a period time until each state is reported as a bar chart.
         
         Args:
             col: `str`, data feature.
-            prev_sec: `integer` or `float`, time range to observe until state is self-reported.
+            
+            deltaT: `list`, ex) [{start}, {end}],
+            Time difference from self-reporting time to start and end 
+            for time range.
+            
             byDriver: `bool`, default:True
                 If True, plot the bat chart for each driver.
 
@@ -210,8 +214,8 @@ class DataAnalyzer(object):
         condi_state = (lambda state: self.HMI_data['state']==state)
         condi_driver = (lambda driver: self.HMI_data['driver']==driver)
         
-        condi_time = (lambda timestamp: df['timestamp']<=timestamp)
-        condi_time_prev = (lambda timestamp: df['timestamp']>=timestamp-prev_sec)
+        condi_time = (lambda timestamp: df['timestamp']<=timestamp+deltaT[1])
+        condi_time_prev = (lambda timestamp: df['timestamp']>=timestamp+deltaT[0])
         
         for state in self.states:
             for driver in self.drivers:
@@ -264,15 +268,21 @@ class DataAnalyzer(object):
         return imgs
             
     
-    def show_mean_image(self, view, mode, prev_sec, byDriver=True, showEach=False):
+    def show_mean_image(self, view, mode, deltaT, byDriver=True, showEach=False):
         """show the mean of mean image of a given view and mode camera for a period time until each state is reported.
         
         Args:
             view: `str`, 'front' or 'side', position of camera installation.
+            
             mode: `str`, 'color' or 'ir', RGB camera of IR camera.
-            prev_sec: `integer` or `float`, time range to observe until state is self-reported.
+            
+            deltaT: `list`, ex) [{start}, {end}],
+            Time difference from self-reporting time to start and end 
+            for time range.
+            
             byDriver: `bool`, default:True
                 If True, show the image for each driver.
+                
             showEach: `bool`, default:False
                 If True, show the image for each sample.
 
@@ -301,14 +311,17 @@ class DataAnalyzer(object):
         condi_state = (lambda state: self.HMI_data['state']==state)
         condi_driver = (lambda driver: self.HMI_data['driver']==driver)
         
-        condi_time = (lambda timestamp: df['timestamp']<=timestamp)
-        condi_time_prev = (lambda timestamp: df['timestamp']>=timestamp-prev_sec)
+        condi_time = (lambda timestamp: df['timestamp']<=timestamp+deltaT[1])
+        condi_time_prev = (lambda timestamp: df['timestamp']>=timestamp+deltaT[0])
         
         for state in self.states:
             for driver in self.drivers:
                 time_list = self.HMI_data[condi_state(state) & condi_driver(driver)]['time']
                 for timestamp in time_list:
+                    # print(timestamp+deltaT[0])
+                    # print(timestamp+deltaT[1])
                     paths = df[condi_time(timestamp) & condi_time_prev(timestamp)]['dir_path']
+                    # print(paths)
                     frames = df[condi_time(timestamp) & condi_time_prev(timestamp)]['frame']
                     if len(paths) == 0:
                         continue
@@ -406,8 +419,7 @@ class DataAnalyzer(object):
 
 
 class DataLoader(DataAnalyzer):
-    '''
-    A data loader for Driver Monitoring System Initialize the basic data to be loaded.
+    '''A data loader for Driver Monitoring System Initialize the basic data to be loaded.
     Args: 
         drivers: `list` or `tuple`, the registered name of meta data. 
         Loads data only for passed driver(s).
@@ -415,6 +427,10 @@ class DataLoader(DataAnalyzer):
         states: `list` or `tuple`, the predefined driver's states.
         Loads data only for passed state(s).
         Reference: "Multimodal data collection system for driver emotion recognition based on self-reporting in real-world driving." Oh, Geesung, et al., 2022, Sensors.
+        
+        batch_size: `int`,
+        
+        shuffle: `bool`,
 
         name: `str`, optional
         the name of the data loader.
@@ -432,57 +448,174 @@ class DataLoader(DataAnalyzer):
     '''
     
     def __init__(self, drivers=[], states=[], batch_size=32, shuffle=True, name=None, **kwargs):
-        super().__init__(self, drivers, states, name)
+        super().__init__(drivers, states, name)
+        
+        self.convert_y_index = {x:i for i, x in enumerate(self.states)}
+        self.convert_label = {i:driver_states[x] for i, x in enumerate(self.states)}
+        self.i_mat = np.eye(len(self.states))
         
         self.batch_size = batch_size
         self.shuffle = shuffle
         
-        self.kwargs = kwargs
+        self.kwargs = kwargs['kwargs']
         
-    def get_y(self):
-        print(self.HMI_data)
+        self.df = {}
+        for col_bio in self.kwargs['cols_BIO']:
+            self.df[col_bio] = df = self.load_bio_data(col_bio)
+        
+        for col_can in self.kwargs['cols_CAN']:
+            self.df[col_can] = df = self.load_can_data(col_can)
+            
+        self.df['image'] = self.load_video_info()
+        
+        
+        self.condi_time = {}
+        self.condi_time['CAN'] = (lambda col, timestamp: self.df[col]['timestamp']<=timestamp)
+        self.condi_time['BIO'] = (lambda col, timestamp: self.df[col]['timestamp']<=timestamp)
+        self.condi_time['image'] = (lambda timestamp: self.df['image']['timestamp']<=timestamp)
+        
+        self.condi_time_prev = {}
+        self.condi_time_prev['CAN'] = (lambda col, timestamp: self.df[col]['timestamp']>=timestamp)
+        self.condi_time_prev['BIO'] = (lambda col, timestamp: self.df[col]['timestamp']>=timestamp)
+        self.condi_time_prev['image'] = (lambda timestamp: self.df['image']['timestamp']>=timestamp)
+        
+        self.dt = {}
+        self.dt['CAN'] = self.kwargs['deltaT_CAN'][1] - self.kwargs['deltaT_CAN'][0]
+        self.dt['BIO'] = self.kwargs['deltaT_BIO'][1] - self.kwargs['deltaT_BIO'][0]
+        
+        self.timestep = {}
+        self.timestep['CAN'] = int((self.dt['CAN'] / self.kwargs['sampling_time_CAN']) - 1)
+        self.timestep['BIO'] = int((self.dt['BIO'] / self.kwargs['sampling_time_BIO']) - 1)
+        
+        self.on_epoch_end()
+        
+        
+    def on_epoch_end(self):
+        self.indices = np.arange(len(self.HMI_data))
+        if self.shuffle == True:
+            np.random.shuffle(self.indices)
+    
+    def __len__(self):
+        return int(np.ceil(len(self.indices) / self.batch_size))
+            
+    def __getitem__(self, idx):
+        indices = self.indices[idx*self.batch_size:(idx+1)*self.batch_size] 
+        
+        batch_onehot_ys, batch_timestamps = self.get_y(indices)
+        
+        
+        
+        batch_x_can, batch_x_bio, batch_x_images, except_times = self.get_x(batch_timestamps)
+        
+        del_indices = [list(batch_timestamps).index(e) for e in except_times]
+        if len(del_indices) > 0:
+            batch_onehot_ys = np.delete(batch_onehot_ys, del_indices, 0)
+        return (batch_x_can, batch_x_bio, batch_x_images), batch_onehot_ys
+        
+        
+    def get_y(self, indices):
+        
+        timestamps = self.HMI_data.loc[indices, 'time'].values
+        ys = [self.convert_y_index[x] for x in self.HMI_data.loc[indices, 'state'].values]
+        onehot_ys = self.i_mat[ys]
+        
+        return onehot_ys, timestamps
                 
+    
+    
+    def get_x_serial(self, timestamp, stream):
+        
+        std_time = timestamp+self.kwargs['deltaT_{}'.format(stream)][0]
+        end_time = timestamp+self.kwargs['deltaT_{}'.format(stream)][1]
+        time_stamp = np.arange(std_time, end_time, self.kwargs['sampling_time_{}'.format(stream)])
         
         
-    def get_series_x(self, cols, prev_sec):
-        """get the total input data of series data such as CAN, BIO data with adjusting sampling time.
+        x_sample = np.array([])
+        for i, col in enumerate(self.kwargs['cols_{}'.format(stream)]):
+            xs = []
+            for t in range(len(time_stamp)-1):
+                x = self.df[col][self.condi_time[stream](col, time_stamp[t+1]) & self.condi_time_prev[stream](col, time_stamp[t])][col].mean()
+                
+                xs.append(x)
+            
+            # if len(xs) < self.timestep_can:
+                # return None    
+            xs = np.array(xs).reshape(-1,1)
+            
+            if i == 0:
+                x_sample = xs[:self.timestep[stream]]
+            else:
+                x_sample = np.concatenate((x_sample, xs[:self.timestep[stream]]), axis=-1)
+            
+        return np.expand_dims(x_sample, axis=0)
+            
+    def get_x_image(self, timestamp):
+        self.condi_time['image'] = (lambda timestamp: self.df['image']['timestamp']<=timestamp)
+        self.condi_time_prev['image'] = (lambda timestamp: self.df['image']['timestamp']>=timestamp)
         
-        Args:
-            cols: list of tuple, 
-            input data features of series data.
-            prev_sec: `integer` or `float`, 
-            time range to observe until state is self-reported.
-            byDriver: `bool`, default:True
-                If True, plot the bat chart for each driver.
-
-        retern:
-            `DataFrame`, the mean value of a given column by state(s) and driver(s).
-        """
-        col = str(col)
-
-        if col in cols_BIO:
-            if col == 'IBI': raise ValueError("{} is not supported yet.".format(col))
-            df = self.load_bio_data(col)
+        std_time = timestamp+self.kwargs['deltaT_image'][0]
+        end_time = timestamp+self.kwargs['deltaT_image'][1]
+        time_stamp = np.arange(std_time, end_time, 1/self.kwargs['sampling_time_image'])
         
-        elif col in cols_CAN_conti:
-            df = self.load_can_data(col)
+        x_image = {}
         
-        else:
-            raise ValueError("Invalid argument:", col)
+        for t in range(len(time_stamp)-1):
+            paths = self.df['image'][self.condi_time['image'](time_stamp[t+1]) & self.condi_time_prev['image'](time_stamp[t])]['dir_path']
+            frames = self.df['image'][self.condi_time['image'](time_stamp[t+1]) & self.condi_time_prev['image'](time_stamp[t])]['frame']
+            
+            if len(paths) == 0:
+                # raise ValueError("Image sampling time may be higher than camera fps.")
+                return False, None
+                        
+            path = list(set(paths))[0]
+            
+            for i, view in enumerate(self.kwargs['image_view']):
+                mode = self.kwargs['image_mode'][i]
+                
+                imgs = self.get_image(path, frames, view, mode)
+                
+                if t == 0:
+                    x_image[view] = np.array(imgs)[:1]
+                else:
+                    x_image[view] = np.concatenate((x_image[view], np.array(imgs)[:1]), axis=0)
+                    
+        return True, x_image
+    
+    
+    def get_x(self, timestamps):
+        batch_x_can = np.array([])
+        batch_x_bio = np.array([])
+        batch_x_images = {}
+        for view in self.kwargs['image_view']:
+            batch_x_images[view] = np.array([])
         
-        show_dict = {
-            'state':[],
-            'driver':[],
-            'count':[],
-            'mean_value':[],
-        }
+        except_time = []
         
-        condi_state = (lambda state: self.HMI_data['state']==state)
-        condi_driver = (lambda driver: self.HMI_data['driver']==driver)
-        
-        condi_time = (lambda timestamp: df['timestamp']<=timestamp)
-        condi_time_prev = (lambda timestamp: df['timestamp']>=timestamp-prev_sec)
-        
+        for i, timestamp in enumerate(timestamps):
+            
+            x_can_sample = self.get_x_serial(timestamp, 'CAN')
+            x_bio_sample = self.get_x_serial(timestamp, 'BIO')
+            
+            flag_img, x_image_samples = self.get_x_image(timestamp)
+            
+            if not flag_img:
+                except_time.append(timestamp)
+                continue
+            
+            if len(batch_x_can) == 0:
+                batch_x_can = x_can_sample
+                batch_x_bio = x_bio_sample
+                for view in self.kwargs['image_view']:
+                    batch_x_images[view] = np.expand_dims(x_image_samples[view], axis=0)
+            else:
+                batch_x_can = np.concatenate((batch_x_can, x_can_sample), axis=0)
+                batch_x_bio = np.concatenate((batch_x_bio, x_bio_sample), axis=0)
+                for view in self.kwargs['image_view']:
+                    batch_x_images[view] = np.concatenate((batch_x_images[view], np.expand_dims(x_image_samples[view], axis=0)), axis=0)
+                
+        return batch_x_can, batch_x_bio, batch_x_images, except_time
+                
+            
     def __call__(self, idx, mode):
         '''
         """
