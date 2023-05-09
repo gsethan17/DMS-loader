@@ -4,8 +4,10 @@ import numpy as np
 import os
 from glob import glob
 
+
+        
 class DataAnalyzer(object):
-    '''A data loader for Driver Monitoring System Initialize the data to be loaded.
+    '''A data analyzer for Driver Monitoring System Initialize the basic data to be loaded.
     Args: 
         drivers: `list` or `tuple`, the registered name of meta data. 
         Loads data only for passed driver(s).
@@ -14,16 +16,13 @@ class DataAnalyzer(object):
         Loads data only for passed state(s).
         Reference: "Multimodal data collection system for driver emotion recognition based on self-reporting in real-world driving." Oh, Geesung, et al., 2022, Sensors.
 
-        name: `str`, the name of the data loader.
+        name: `str`, the name of the data analyzer.
 
     ```python
-    from utils import DataLoader
+    from utils import DataAnalyzer
 
-    data_loader = DataLoader()
+    data_analyzer = DataAnalyzer()
     ```
-
-    Once the data loader is created, you can get the data
-    with `data_loader.get_data()`.
     '''
 
     def __init__(self, drivers=[], states=[], name=None, **keyargs):
@@ -178,7 +177,7 @@ class DataAnalyzer(object):
         return df_concat.reset_index(inplace=False, drop=True)
     
     def plot_mean_value(self, col, prev_sec, byDriver=True):
-        """plot the mean of mean value of a given column for a period time until each state is reported as a bat chart.
+        """plot the mean of mean value of a given column for a period time until each state is reported as a bar chart.
         
         Args:
             col: `str`, data feature.
@@ -246,11 +245,6 @@ class DataAnalyzer(object):
         
         import cv2
         
-        if view == 'front':
-            folder = 'FrontView'
-        if view == 'side':
-            folder = 'SideView'
-        
         video_path = glob(os.path.join(path, '*', '{}_{}2.avi'.format(mode, view)))[0]
         video = cv2.VideoCapture(video_path)
         
@@ -271,7 +265,7 @@ class DataAnalyzer(object):
             
     
     def show_mean_image(self, view, mode, prev_sec, byDriver=True, showEach=False):
-        """show the mean of mean image of a given column for a period time until each state is reported.
+        """show the mean of mean image of a given view and mode camera for a period time until each state is reported.
         
         Args:
             view: `str`, 'front' or 'side', position of camera installation.
@@ -296,10 +290,13 @@ class DataAnalyzer(object):
         }
         
         mean_img = {}
+        num_mean_imgs = {}
         for state in self.states:
             mean_img[state] = {}
+            num_mean_imgs[state] = {}
             for driver in self.drivers:
                 mean_img[state][driver] = np.zeros((720, 1280, 3))
+                num_mean_imgs[state][driver] = 0
         
         condi_state = (lambda state: self.HMI_data['state']==state)
         condi_driver = (lambda driver: self.HMI_data['driver']==driver)
@@ -323,17 +320,23 @@ class DataAnalyzer(object):
                         
                     path = list(set(paths))[0]
                     imgs = self.get_image(path, frames, view, mode)
+                    num_img = len(np.array(imgs))
+                    num_mean_imgs[state][driver] += num_img
+                    each_mean_img = np.array(imgs).mean(axis=0)
                     
                     if mean_img[state][driver].sum() == 0:
-                        mean_img[state][driver] = np.array(imgs).mean(axis=0)
+                        mean_img[state][driver] = each_mean_img
                         
                     else:
-                        mean_img[state][driver] = ((mean_img[state][driver] + np.array(imgs).mean(axis=0)) / 2.)
+                        mean_img[state][driver] = ((mean_img[state][driver] + each_mean_img) / 2.)
                         
                     if showEach:
-                        print(state, driver)
+                        print("Driver: ", driver)
+                        print("State: ", driver_states[state])
+                        print("Number of raw images: ", num_img)
+                        print("Mean image shape: ", each_mean_img.shape)
                         import matplotlib.pyplot as plt
-                        plt.imshow(mean_img[state][driver] / 255.)
+                        plt.imshow(each_mean_img / 255.)
                         plt.show()
                         
                     image_info['state'].append(state)
@@ -341,14 +344,15 @@ class DataAnalyzer(object):
                     image_info['path'].append(path)
                     image_info['frames'].append(frames)
                     
-        if not byDriver: imgs = {}
+        if not byDriver: imgs, num_imgs = {}, {}
         for state in self.states:
-            if not byDriver: imgs[state] = np.zeros((720, 1280, 3))
+            if not byDriver: imgs[state], num_imgs = np.zeros((720, 1280, 3)), 0
                 
             for driver in self.drivers:
                 if byDriver:
                     print("Driver: ", driver)
                     print("State: ", driver_states[state])
+                    print("Number of raw images: ", num_mean_imgs[state][driver])
                     print("Mean image shape: ", mean_img[state][driver].shape)
                     import matplotlib.pyplot as plt
                     plt.imshow(mean_img[state][driver] / 255.)
@@ -357,12 +361,15 @@ class DataAnalyzer(object):
                 else:
                     if imgs[state].sum() == 0:
                         imgs[state] = mean_img[state][driver]
+                        num_imgs[state] += num_mean_imgs[state][driver]
                     else:
                         imgs[state] = ((imgs[state] + mean_img[state][driver]) / 2.)
+                        num_imgs[state] += num_mean_imgs[state][driver]
                 
             if not byDriver:
                 print("State: ", driver_states[state])
                 print("Mean image shape: ", imgs[state].shape)
+                print("Number of raw images: ", num_imgs[state])
                 import matplotlib.pyplot as plt
                 plt.imshow(imgs[state] / 255.)
                 plt.show()
@@ -396,6 +403,86 @@ class DataAnalyzer(object):
                 plt.imshow(imgs[state] / 255.)
                 plt.show()
         return mean_img, None
+
+
+class DataLoader(DataAnalyzer):
+    '''
+    A data loader for Driver Monitoring System Initialize the basic data to be loaded.
+    Args: 
+        drivers: `list` or `tuple`, the registered name of meta data. 
+        Loads data only for passed driver(s).
+
+        states: `list` or `tuple`, the predefined driver's states.
+        Loads data only for passed state(s).
+        Reference: "Multimodal data collection system for driver emotion recognition based on self-reporting in real-world driving." Oh, Geesung, et al., 2022, Sensors.
+
+        name: `str`, optional
+        the name of the data loader.
+        
+        kwargs : mapping, optional
+        a dictionary of keyword arguments passed into func.
+
+    ```python
+    from utils import DataLoader
+
+    data_loader = DataLoader()
+    ```
+    Once the data loader is created, you can get the data
+    with `data_loader.get_data()`.
+    '''
+    
+    def __init__(self, drivers=[], states=[], batch_size=32, shuffle=True, name=None, **kwargs):
+        super().__init__(self, drivers, states, name)
+        
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        
+        self.kwargs = kwargs
+        
+    def get_y(self):
+        print(self.HMI_data)
+                
+        
+        
+    def get_series_x(self, cols, prev_sec):
+        """get the total input data of series data such as CAN, BIO data with adjusting sampling time.
+        
+        Args:
+            cols: list of tuple, 
+            input data features of series data.
+            prev_sec: `integer` or `float`, 
+            time range to observe until state is self-reported.
+            byDriver: `bool`, default:True
+                If True, plot the bat chart for each driver.
+
+        retern:
+            `DataFrame`, the mean value of a given column by state(s) and driver(s).
+        """
+        col = str(col)
+
+        if col in cols_BIO:
+            if col == 'IBI': raise ValueError("{} is not supported yet.".format(col))
+            df = self.load_bio_data(col)
+        
+        elif col in cols_CAN_conti:
+            df = self.load_can_data(col)
+        
+        else:
+            raise ValueError("Invalid argument:", col)
+        
+        show_dict = {
+            'state':[],
+            'driver':[],
+            'count':[],
+            'mean_value':[],
+        }
+        
+        condi_state = (lambda state: self.HMI_data['state']==state)
+        condi_driver = (lambda driver: self.HMI_data['driver']==driver)
+        
+        condi_time = (lambda timestamp: df['timestamp']<=timestamp)
+        condi_time_prev = (lambda timestamp: df['timestamp']>=timestamp-prev_sec)
+        
     def __call__(self, idx, mode):
         '''
         """
