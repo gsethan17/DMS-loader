@@ -75,7 +75,7 @@ class DataAnalyzer(object):
 
 
     def plot_HMI_count(self, byDriver=True):
-        """plot the number of self-reported driver's states as a bat chart
+        """plot the number of self-reported driver's states as a bar chart
         Args:
             byDriver: `bool`, default:True
                 If True, plot the bat chart for each driver.
@@ -183,8 +183,7 @@ class DataAnalyzer(object):
             col: `str`, data feature.
             
             deltaT: `list`, ex) [{start}, {end}],
-            Time difference from self-reporting time to start and end 
-            for time range.
+            Time difference from self-reporting time to start and end for time range.
             
             byDriver: `bool`, default:True
                 If True, plot the bat chart for each driver.
